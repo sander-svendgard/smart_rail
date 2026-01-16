@@ -3,6 +3,7 @@
 #include <ultrasonic.cpp>
 
 
+<<<<<<< Updated upstream
 // put function declarations here:
 int myFunction(int, int);
 
