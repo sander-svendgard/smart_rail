@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <WiFi.h>
+
 
 const int trigPin = 33;
 const int echoPin = 32;
