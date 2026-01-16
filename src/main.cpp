@@ -9,21 +9,27 @@ const int echoPin = 32;
 #define SOUND_SPEED 0.034
 #define CM_TO_INCH 0.393701
 
-WiFiConnection wifi("YOUR_SSID", "YOUR_PASSWORD");
+WiFiConnection wifi("NTNU-IOT", "");
 
 long duration;
 float distanceCm;
 float distanceInch;
 
 void setup() {
-  Serial.begin(115200); 
+  Serial.begin(9600); 
   delay(1000);
-  
+
   pinMode(trigPin, OUTPUT); 
   pinMode(echoPin, INPUT);
-  
   wifi.connect();
   delay(1000);
+
+  Serial.println("\n ESP32 WEB server");
+  Serial.print("Tilgang til web serveren på: http://");
+  Serial.println(WiFi.localIP());
+  Serial.println("--------\n");
+
+  
   wifi.startWebServer();
 }
 
