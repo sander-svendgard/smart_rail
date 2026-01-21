@@ -1,22 +1,49 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <ultrasonic.cpp>
+#include "wificonnection.h"
 
 
-<<<<<<< Updated upstream
-// put function declarations here:
-int myFunction(int, int);
+const int trigPin = 33;
+const int echoPin = 32;
+
+#define SOUND_SPEED 0.034
+#define CM_TO_INCH 0.393701
+
+WiFiConnection wifi("YOUR_SSID", "YOUR_PASSWORD");
+
+long duration;
+float distanceCm;
+float distanceInch;
 
 void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
+  Serial.begin(115200); 
+  delay(1000);
+  
+  pinMode(trigPin, OUTPUT); 
+  pinMode(echoPin, INPUT);
+  
+  wifi.connect();
+  delay(1000);
+  wifi.startWebServer();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-}
+  wifi.handleClient();
+  
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  duration = pulseIn(echoPin, HIGH);
+  
+  distanceCm = duration * SOUND_SPEED/2;
+  distanceInch = distanceCm * CM_TO_INCH;
 
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+  String output = "Distance (cm): " + String(distanceCm) + " | Distance (inch): " + String(distanceInch);
+  wifi.sendData(output);
+  
+  delay(500);
 }
