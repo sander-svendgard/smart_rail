@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include "wificonnection.h"
 
+const char* mqtt_server = "10.22.129.231"; // Oliver sin ip adresse 
 
 const int trigPin = 33;
 const int echoPin = 32;
