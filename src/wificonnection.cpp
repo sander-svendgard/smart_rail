@@ -83,3 +83,30 @@ String WiFiConnection::getLocalIP() {
 bool WiFiConnection::isConnected() {
   return WiFi.status() == WL_CONNECTED;
 }
+
+void WiFiConnection::setDestination(const char* mqtt_server, int mqtt_port) {
+  mqttClient.setClient(espClient);
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  reconnectMQTT();
+}
+
+void WiFiConnection::reconnectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.print("Kobler til MQTT...");
+    if (mqttClient.connect("ESP32Client")) {
+      Serial.println("tilkoblet!");
+    } else {
+      Serial.print("feilet, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" prøver igjen om 5 sekunder");
+      delay(5000);
+    }
+  }
+}
+
+void WiFiConnection::publishMQTT(const char* topic, String message) {
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+  }
+  mqttClient.publish(topic, message.c_str());
+}
