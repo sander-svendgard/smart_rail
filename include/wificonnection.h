@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <PubSubClient.h>
 
 class WiFiConnection {
 public:
@@ -14,6 +15,9 @@ public:
   void handleClient();
   void sendData(String data);
   
+  void setDestination(const char* mqtt_server, int mqtt_port);
+  void publishMQTT(const char* topic, String message);
+  
   String getLocalIP();
   bool isConnected();
 
@@ -23,8 +27,12 @@ private:
   WebServer server;
   String lastData;
   
+  WiFiClient espClient;
+  PubSubClient mqttClient;
+  
   void handleRoot();
   void handleData();
+  void reconnectMQTT();
 };
 
 #endif

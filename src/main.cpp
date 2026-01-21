@@ -29,7 +29,8 @@ void setup() {
   Serial.print("Tilgang til web serveren på: http://");
   Serial.println(WiFi.localIP());
   Serial.println("--------\n");
-
+  
+  wifi.setDestination(mqtt_server, 1883);
   
   wifi.startWebServer();
 }
@@ -51,6 +52,9 @@ void loop() {
 
   String output = "Distance (cm): " + String(distanceCm) + " | Distance (inch): " + String(distanceInch);
   wifi.sendData(output);
+  
+  // Send til MQTT server
+  wifi.publishMQTT("sensor/distance", output);
   
   delay(500);
 }
