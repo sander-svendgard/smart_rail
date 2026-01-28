@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include "wificonnection.h"
 
+const char* mqtt_server = "10.22.129.231"; // Oliver sin ip adresse 
 
 const int trigPin = 33;
 const int echoPin = 32;
@@ -9,21 +10,28 @@ const int echoPin = 32;
 #define SOUND_SPEED 0.034
 #define CM_TO_INCH 0.393701
 
-WiFiConnection wifi("YOUR_SSID", "YOUR_PASSWORD");
+WiFiConnection wifi("NTNU-IOT", "");
 
 long duration;
 float distanceCm;
 float distanceInch;
 
 void setup() {
-  Serial.begin(115200); 
+  Serial.begin(9600); 
   delay(1000);
-  
+
   pinMode(trigPin, OUTPUT); 
   pinMode(echoPin, INPUT);
-  
   wifi.connect();
   delay(1000);
+
+  Serial.println("\n ESP32 WEB server");
+  Serial.print("Tilgang til web serveren på: http://");
+  Serial.println(WiFi.localIP());
+  Serial.println("--------\n");
+  
+  wifi.setDestination(mqtt_server, 1883);
+  
   wifi.startWebServer();
 }
 
@@ -44,6 +52,9 @@ void loop() {
 
   String output = "Distance (cm): " + String(distanceCm) + " | Distance (inch): " + String(distanceInch);
   wifi.sendData(output);
+  
+  // Send til MQTT server
+  wifi.publishMQTT("sensor/distance", output);
   
   delay(500);
 }

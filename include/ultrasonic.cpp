@@ -1,40 +1,26 @@
-#include <Arduino.h>
+#include "ultrasonic.h"
 
-const int trigPin = 33;
-const int echoPin = 32;
+Ultrasonic::Ultrasonic(int trigpin, int echopin):
+  trigpin(trigpin), echopin(echopin){}
 
-
-#define SOUND_SPEED 0.034
-#define CM_TO_INCH 0.393701
-
-long duration;
-float distanceCm;
-float distanceInch;
-
-void setup() {
-  Serial.begin(9600); 
-  pinMode(trigPin, OUTPUT); 
-  pinMode(echoPin, INPUT);
+void Ultrasonic::init(){
+  pinMode(trigpin, OUTPUT);
+  pinMode(echopin, INPUT);
 }
 
-void loop() {
-  
-  digitalWrite(trigPin, LOW);
+float Ultrasonic::measureDistance(){
+  digitalWrite(trigpin, LOW);
   delayMicroseconds(2);
-  
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-  
-  duration = pulseIn(echoPin, HIGH);
-  
-  distanceCm = duration * SOUND_SPEED/2;
-  distanceInch = distanceCm * CM_TO_INCH;
 
-  Serial.print("Distance (cm): ");
-  Serial.println(distanceCm);
-  Serial.print("Distance (inch): ");
-  Serial.println(distanceInch);
+  digitalWrite(trigpin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigpin, LOW);
+
+  long duration = pulseIn(echopin, HIGH);
+  float distanceCm = duration * SOUND_SPEED / 2; 
   
-  delay(500);
+  return distanceCm; 
+
 }
+
+
