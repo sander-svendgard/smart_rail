@@ -1,8 +1,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "wificonnection.h"
+#include "wificonn.h"
 
-const char* mqtt_server = "10.22.129.231"; // Oliver sin ip adresse 
+const char* mqtt_server = "10.22.57.147"; // Oliver sin ip adresse 
 
 const int trigPin = 33;
 const int echoPin = 32;
@@ -15,6 +16,8 @@ WiFiConnection wifi("NTNU-IOT", "");
 long duration;
 float distanceCm;
 float distanceInch;
+bool seen = true;
+String incomingString;
 
 void setup() {
   Serial.begin(9600); 
@@ -24,15 +27,14 @@ void setup() {
   pinMode(echoPin, INPUT);
   wifi.connect();
   delay(1000);
+  
+  wifi.setDestination(mqtt_server, 1883);
+  wifi.startWebServer();
 
   Serial.println("\n ESP32 WEB server");
   Serial.print("Tilgang til web serveren på: http://");
   Serial.println(WiFi.localIP());
   Serial.println("--------\n");
-  
-  wifi.setDestination(mqtt_server, 1883);
-  
-  wifi.startWebServer();
 }
 
 void loop() {

@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include "wificonn.h"
 
 // Replace with your network credentials
 const char* ssid = "NTNU-IOT";
@@ -42,35 +43,4 @@ void handleLEDOff() {
   ledState = false;
   digitalWrite(ledPin, LOW);
   server.send(200, "text/html", HTMLPage());
-}
-
-void setup() {
-  Serial.begin(115200); // Øk til 115200
-
-  // Bytt til GPIO2 for innebygd LED på de fleste ESP32-kort
-  pinMode(2, OUTPUT); // eller test GPIO4 hvis det er riktig for ditt kort
-  digitalWrite(2, LOW); // Start med LED av
-
-  // Connect to Wi-Fi
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nConnected to Wi-Fi");
-  Serial.println(WiFi.localIP());
-
-  // Define server routes
-  server.on("/", handleRoot);
-  server.on("/on", handleLEDOn);
-  server.on("/off", handleLEDOff);
-
-  // Start the server
-  server.begin();
-  Serial.println("Server started");
-}
-
-void loop() {
-  server.handleClient(); // Handle client requests
 }
