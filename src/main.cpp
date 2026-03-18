@@ -20,35 +20,41 @@ unsigned long groupStartTime = 0;
 
 // FIX 1: Høyere terskel for å hindre for rask aktivering
 const unsigned long RESET_TIMEOUT = 15000;   // 15 sekunder
-const unsigned long ACTIVATION_DELAY = 800;  // 800ms mellom sensorer
+const unsigned long ACTIVATION_DELAY = 200;  // 200ms cooldown mellom sensorer
 const float MAX_DISTANCE = 20.0;
 const float TRIGGER_DISTANCE = 10.0;
 const int REQUIRED_READINGS = 5;             // 5 x 100ms = 500ms sammenhengende deteksjon
+const unsigned long DISTANCE_PUBLISH_INTERVAL = 300; // publiser distanse maks hvert 300ms
 
 int triggerCount = 0;
 
-// FIX 2: groupActive hindrer reset-loop etter fullført runde
+// groupActive hindrer reset-loop etter fullført runde
 bool groupActive = false;
 
-void publishAllSensorStatuses(int forActiveSensor, const char* activeStatus) {
+// Statussporing — publiser kun ved endring for å unngå MQTT-flooding
+String lastSensorStatus[3] = {"", "", ""};
+unsigned long lastDistancePublish = 0;
+
+void setSensorStatus(int idx, const char* status) {
+  if (lastSensorStatus[idx] == status) return;  // Ingen endring, ikke publiser
+  lastSensorStatus[idx] = String(status);
+  int sensorNum = idx + 1 + sensorOffset;
+  String topic = "togbane/sensor/" + String(sensorNum) + "/status";
+  wifi.publishMQTT(topic.c_str(), status);
+  Serial.println("Status sensor " + String(sensorNum) + " -> " + String(status));
+}
+
+// Setter DONE for alle aktiverte, WAITING for resten — publiserer kun ved endring
+void updateSensorStatuses(int activeIdx) {
   for (int i = 0; i < numSensors; i++) {
-    int sensorNum = i + 1 + sensorOffset;
-    String statusTopic = "togbane/sensor/" + String(sensorNum) + "/status";
-    if (i == forActiveSensor) {
-      wifi.publishMQTT(statusTopic.c_str(), activeStatus);
-    } else if (i < forActiveSensor) {
-      wifi.publishMQTT(statusTopic.c_str(), "DONE");
-    } else {
-      wifi.publishMQTT(statusTopic.c_str(), "WAITING");
-    }
+    if (i < activeIdx) setSensorStatus(i, "DONE");
+    else setSensorStatus(i, "WAITING");
   }
 }
 
 void publishAllSleep() {
   for (int i = 0; i < numSensors; i++) {
-    int sensorNum = i + 1 + sensorOffset;
-    String statusTopic = "togbane/sensor/" + String(sensorNum) + "/status";
-    wifi.publishMQTT(statusTopic.c_str(), "SLEEP");
+    setSensorStatus(i, "SLEEP");
   }
 }
 
@@ -56,9 +62,12 @@ void publishAllSleep() {
 void doReset(bool sendMqtt) {
   activeSensor = 0;
   triggerCount = 0;
-  groupActive = false;        // Stopper reset-loopen
-  groupStartTime = millis();  // Oppdater alltid
-  lastTriggerTime = millis(); // Oppdater alltid
+  groupActive = false;
+  groupStartTime = millis();
+  lastTriggerTime = millis();
+
+  // Tøm statuscache så nye statuser faktisk publiseres etter reset
+  for (int i = 0; i < 3; i++) lastSensorStatus[i] = "";
 
   if (!isFirstGroup) {
     waitingForStart = true;
@@ -93,6 +102,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       triggerCount = 0;
       lastTriggerTime = millis();
       groupStartTime = millis();
+      // Tøm statuscache så WAITING publiseres korrekt ved oppstart
+      for (int i = 0; i < 3; i++) lastSensorStatus[i] = "";
     }
   }
 }
@@ -226,21 +237,29 @@ void loop() {
     triggerCount = 0;
   }
 
-  String distTopic = "togbane/sensor/" + String(sensorNum) + "/distanse";
-  wifi.publishMQTT(distTopic.c_str(), String(distance, 1));
-  publishAllSensorStatuses(activeSensor, "WAITING");
+  // Publiser distanse kun hvert 300ms for å unngå MQTT-flooding
+  if (millis() - lastDistancePublish >= DISTANCE_PUBLISH_INTERVAL) {
+    lastDistancePublish = millis();
+    String distTopic = "togbane/sensor/" + String(sensorNum) + "/distanse";
+    wifi.publishMQTT(distTopic.c_str(), String(distance, 1));
+  }
+
+  // Oppdater statuser kun ved endring (ikke hvert tick)
+  updateSensorStatuses(activeSensor);
 
   Serial.println("Sensor " + String(sensorNum) + ": " + String(distance) +
                  " cm (treff: " + String(triggerCount) + "/" + String(REQUIRED_READINGS) + ")");
 
   bool delayPassed = (millis() - lastTriggerTime > ACTIVATION_DELAY);
 
-  if (distance < TRIGGER_DISTANCE && distance > 0.5 && delayPassed) {
+  // Tell opp så snart toget er under terskelen — vent ikke på cooldown for å starte telling
+  // slik at raske tog ikke hoppes over
+  if (distance < TRIGGER_DISTANCE && distance > 0.5) {
     triggerCount++;
 
-    if (triggerCount >= REQUIRED_READINGS) {
-      String statusTopic = "togbane/sensor/" + String(sensorNum) + "/status";
-      wifi.publishMQTT(statusTopic.c_str(), "ACTIVE");
+    if (triggerCount >= REQUIRED_READINGS && delayPassed) {
+      // Publiser ACTIVE — setSensorStatus garanterer én publisering, ikke druknet i WAITING
+      setSensorStatus(activeSensor, "ACTIVE");
       Serial.println(">>> Sensor " + String(sensorNum) + " AKTIVERT! <<<");
 
       lastTriggerTime = millis();
@@ -251,9 +270,7 @@ void loop() {
         Serial.println("Alle sensorer på denne ESP32 aktivert!");
 
         for (int i = 0; i < numSensors; i++) {
-          int sNum = i + 1 + sensorOffset;
-          String sTopic = "togbane/sensor/" + String(sNum) + "/status";
-          wifi.publishMQTT(sTopic.c_str(), "DONE");
+          setSensorStatus(i, "DONE");
         }
 
         if (isFirstGroup) {
@@ -282,7 +299,7 @@ void loop() {
         Serial.println("Venter på sensor " + String(activeSensor + 1 + sensorOffset) + "...");
       }
     }
-  } else if (distance >= TRIGGER_DISTANCE || distance <= 0.5) {
+  } else {
     triggerCount = 0;
   }
 
