@@ -16,6 +16,8 @@ public:
   void sendData(String data);
   
   void setDestination(const char* mqtt_server, int mqtt_port);
+  void setCallback(MQTT_CALLBACK_SIGNATURE);
+  void subscribe(const char* topic);
   void publishMQTT(const char* topic, String message);
   
   String getLocalIP();
@@ -29,6 +31,8 @@ private:
   
   WiFiClient espClient;
   PubSubClient mqttClient;
+  
+  const char* subscribedTopic = nullptr;
   
   void handleRoot();
   void handleData();
