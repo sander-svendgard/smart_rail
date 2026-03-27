@@ -1,58 +1,24 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "wificonnection.h"
-#include "ultrasonic.h"
+#include "gyro.h"
 
-const char* mqtt_server = "10.22.130.167";  //Må alltid sjekke at vi har riktig IP-adresse
+const char* mqtt_server = "10.22.130.110";
 
 WiFiConnection wifi("NTNU-IOT", "");
+ICM20948Gyro gyro;
 
-Ultrasonic* sensors[2] = {nullptr, nullptr};
-int numSensors = 0;
-int sensorOffset = 0;
-
-const unsigned long PUBLISH_INTERVAL = 200; // ms mellom hver publisering
+// Publiser gyrodata hvert 200ms
+const unsigned long PUBLISH_INTERVAL = 200;
 unsigned long lastPublish = 0;
 
 void setup() {
   Serial.begin(9600);
   delay(1000);
 
-  String mac = WiFi.macAddress();
-  Serial.println("============================");
-  Serial.println("MAC: " + mac);
-  Serial.println("============================");
+  Serial.println("=== Gyro testprogram ===");
 
-  if (mac == "10:97:BD:D4:DE:B0") {
-    Serial.println("ESP32 #1 - Sensor 1-2");
-    sensorOffset = 0;
-    numSensors = 2;
-    sensors[0] = new Ultrasonic(26, 25);
-    sensors[1] = new Ultrasonic(32, 33);
-  }
-  else if (mac == "4C:C3:82:CC:E0:EC") {
-    Serial.println("ESP32 #2 - Sensor 3-4");
-    sensorOffset = 2;
-    numSensors = 2;
-    sensors[0] = new Ultrasonic(14, 27);
-    sensors[1] = new Ultrasonic(26, 25);
-  }
-  else if (mac == "A4:F0:0F:67:19:EC") {  // Oppdater til faktisk MAC hvis feil
-    Serial.println("ESP32 #3 - Sensor 5-6");
-    sensorOffset = 4;
-    numSensors = 2;
-    sensors[0] = new Ultrasonic(26, 25);
-    sensors[1] = new Ultrasonic(32, 33);
-  }
-  else {
-    Serial.println("UKJENT ESP32! MAC: " + mac);
-    while (true) { delay(1000); }
-  }
-
-  for (int i = 0; i < numSensors; i++) {
-    sensors[i]->init();
-  }
-
+  // Koble til WiFi og MQTT
   wifi.connect();
   delay(1000);
   wifi.setDestination(mqtt_server, 1883);
@@ -60,6 +26,14 @@ void setup() {
 
   Serial.print("IP: http://");
   Serial.println(WiFi.localIP());
+
+  // Initialiser gyroskopet (standard I2C-pinner på ESP32: SDA=21, SCL=22)
+  // Bruker ±250 dps – høyest presisjon, passer for rolige togbevegelser
+  if (!gyro.init(GYRO_FS_250DPS)) {
+    Serial.println("FEIL: Kunne ikke initialisere gyro! Sjekk kabling.");
+    while (true) { delay(1000); }
+  }
+
   Serial.println("--- KLAR ---");
 }
 
@@ -69,17 +43,18 @@ void loop() {
   if (millis() - lastPublish >= PUBLISH_INTERVAL) {
     lastPublish = millis();
 
-    for (int i = 0; i < numSensors; i++) {
-      float distance = sensors[i]->measureDistance();
+    // Les gyroskopdata (grader/sekund per akse)
+    float gx, gy, gz;
+    gyro.readGyro(gx, gy, gz);
 
-      // Begrens til gyldig område
-      if (distance <= 0 || distance > 400) distance = 400.0;
+    // Publiser hver akse til eget MQTT-topic
+    wifi.publishMQTT("togbane/gyro/x", String(gx, 2));
+    wifi.publishMQTT("togbane/gyro/y", String(gy, 2));
+    wifi.publishMQTT("togbane/gyro/z", String(gz, 2));
 
-      int sensorNum = i + 1 + sensorOffset;
-      String topic = "togbane/sensor/" + String(sensorNum) + "/distanse";
-      wifi.publishMQTT(topic.c_str(), String(distance, 1));
-
-      Serial.println("Sensor " + String(sensorNum) + ": " + String(distance, 1) + " cm");
-    }
+    Serial.print("Gyro  X: "); Serial.print(gx, 2);
+    Serial.print("  Y: ");     Serial.print(gy, 2);
+    Serial.print("  Z: ");     Serial.print(gz, 2);
+    Serial.println(" deg/s");
   }
 }
