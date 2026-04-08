@@ -15,7 +15,7 @@ import paho.mqtt.client as mqtt
 import time
 from collections import deque
 
-BROKER = "10.22.130.167" # Sjekk at IP-adressen er rikitg 
+BROKER = "10.22.128.115" # Sjekk at IP-adressen er rikitg 
 PORT = 1883
 
 TRIGGER_DISTANCE = 10.0   # cm — sett lavere enn alle sensorers bakgrunnsmåling

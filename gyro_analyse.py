@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 #  Innstillinger 
 
-MQTT_BROKER = "10.22.130.110"
+MQTT_BROKER = "10.22.128.115"
 MQTT_PORT   = 1883
 
 # Antall målinger som kreves per segment før vi begynner å detektere avvik.

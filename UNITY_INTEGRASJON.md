@@ -128,7 +128,7 @@ public class MqttManager : MonoBehaviour
     public static MqttManager Instance;
 
     private MqttClient client;
-    private const string BrokerAddress = "10.22.130.110";
+    private const string BrokerAddress = "10.22.128.115";
     private const int    BrokerPort    = 1883;
 
     // Andre scripts registrerer seg her for å motta meldinger
