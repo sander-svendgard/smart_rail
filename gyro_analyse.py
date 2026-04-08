@@ -26,7 +26,7 @@ import anthropic
 import paho.mqtt.client as mqtt
 from pydantic import BaseModel
 
-# ─── Innstillinger ──────────────────────────────────────────────────────────
+#  Innstillinger 
 
 MQTT_BROKER = "10.22.130.110"
 MQTT_PORT   = 1883
@@ -43,7 +43,7 @@ ANOMALY_SIGMA_THRESHOLD = 2.5
 # Hindrer at ett reelt avvik sender 100 meldinger til Claude.
 ANOMALY_COOLDOWN_SEC = 15
 
-# ─── Delt tilstand (trådsikkert med lock) ───────────────────────────────────
+#Delt tilstand  
 
 state_lock = threading.Lock()
 
@@ -65,12 +65,12 @@ baseline_samples: dict[int, dict[str, list[float]]] = {}
 # Tidspunkt for siste avvarsmel per (posisjon, akse) — for cooldown
 last_anomaly_time: dict[str, float] = {}
 
-# ─── Klienter ───────────────────────────────────────────────────────────────
+#  Klienter 
 
 mqtt_client      = mqtt.Client()
 anthropic_client = anthropic.Anthropic()
 
-# ─── Pydantic-modell for strukturert svar fra Claude ────────────────────────
+#  Pydantic-modell for strukturert svar fra Claude
 
 class AvvikAnalyse(BaseModel):
     er_avvik:     bool   # True hvis Claude bekrefter at dette er et reelt avvik
@@ -79,7 +79,7 @@ class AvvikAnalyse(BaseModel):
     alvorlighet:  str    # "LAV", "MIDDELS" eller "HØY"
     anbefaling:   str    # Hva bør gjøres (inspeksjon, ignorere, logg videre)
 
-# ─── MQTT-callbacks ─────────────────────────────────────────────────────────
+#  MQTT-callbacks 
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
@@ -104,7 +104,7 @@ def on_message(client, userdata, msg):
     topic   = msg.topic
     payload = msg.payload.decode().strip()
 
-    # ── Posisjonssporing via ultrasoniske sensorer ──────────────────────────
+    #  Posisjonssporing via ultrasoniske sensorer 
     # Når en sensor rapporterer ACTIVE vet vi at toget passerte det segmentet
     if "/status" in topic:
         if payload == "ACTIVE":
@@ -118,7 +118,7 @@ def on_message(client, userdata, msg):
                 pass
         return
 
-    # ── Gyrodata ────────────────────────────────────────────────────────────
+    #  Gyrodata 
     if "gyro" in topic:
         axis = topic.split("/")[-1]   # "x", "y" eller "z"
         if axis not in ("x", "y", "z"):
@@ -160,7 +160,7 @@ def on_message(client, userdata, msg):
             cooldown_key    = f"{pos}_{axis}"
             last_time       = last_anomaly_time.get(cooldown_key, 0)
 
-        # ── Statistisk avvikssjekk (utenfor lock) ───────────────────────────
+        # Statistisk avvikssjekk (utenfor lock) 
         mean  = statistics.mean(samples_copy)
         stdev = statistics.stdev(samples_copy)
 
@@ -173,7 +173,7 @@ def on_message(client, userdata, msg):
         if z_score <= ANOMALY_SIGMA_THRESHOLD:
             return  # Normal måling
 
-        # ── Cooldown-sjekk ──────────────────────────────────────────────────
+        # Cooldown-sjekk 
         now = time.time()
         if now - last_time < ANOMALY_COOLDOWN_SEC:
             return  # For nylig siden siste avvarsmel
@@ -193,7 +193,7 @@ def on_message(client, userdata, msg):
         ).start()
 
 
-# ─── Claude API-analyse ──────────────────────────────────────────────────────
+# Claude API-analyse 
 
 def analyse_with_claude(
     axis: str,
@@ -321,7 +321,7 @@ Alvorlighetsgrader:
         print(f"Feil ved parsing av Claude-svar: {e}")
 
 
-# ─── Oppstart ────────────────────────────────────────────────────────────────
+# Oppstart 
 
 def main():
     print("=== smart_rail gyro-analyse ===")
