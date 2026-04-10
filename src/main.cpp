@@ -2,9 +2,23 @@
 #include <WiFi.h>
 #include "wificonnection.h"
 #include "ultrasonic.h"
+#include "gyro.h"
 
-const char* mqtt_server = "10.22.128.83";
+// ── Nettverksinnstillinger ────────────────────────────────────────────────
+const char* MQTT_SERVER = "10.22.129.65";
 
+// ── Deteksjonsparametere ──────────────────────────────────────────────────
+const float         TRIGGER_DISTANCE  = 10.0f;  // cm — regnes som deteksjon
+const float         MAX_DISTANCE      = 20.0f;  // cm — ignoreres over denne
+const int           REQUIRED_READINGS = 5;      // Påfølgende målinger under terskel
+const unsigned long ACTIVATION_DELAY  = 800;    // ms minimum mellom sensoraktiveringer
+const unsigned long RESET_TIMEOUT     = 15000;  // ms uten aktivitet → reset
+
+// ── Sensortilstander ──────────────────────────────────────────────────────
+enum SensorState { WAITING, ACTIVE, DONE };
+const char* STATE_STR[] = { "WAITING", "ACTIVE", "DONE" };
+
+// ── Globale variabler (settes i setup basert på MAC) ─────────────────────
 WiFiConnection wifi("NTNU-IOT", "");
 
 Ultrasonic* sensors[3] = {nullptr, nullptr, nullptr};
