@@ -7,6 +7,7 @@ Utvikling av en **digital tvilling** for en fysisk modelljernbane. Systemet komb
 ## Arkitektur
 
 - **3 ESP32-kort**, hvert med 2 HC-SR04 ultrasoniske sensorer (6 sensorer totalt)
+- **1 ICM-20948 IMU** (9-akse: akselerometer + gyroskop + magnetometer) koblet via I2C — brukes til å detektere avvik langs skinnene og fartsendringer
 - Sensor data sendes via **MQTT** til en broker som Unity leser fra
 - Unity bruker dataen til å oppdatere en **3D-modell av togbanen i sanntid**
 - Formålet er posisjonssporing av toget og prediktivt vedlikehold (avviksdeteksjon i skinnene)
@@ -38,6 +39,9 @@ Dette sikrer at systemet vet **nøyaktig hvor toget befinner seg** på banen til
 | `togbane/gruppe1/ferdig`      | ESP32 #1 signalerer til #2 (`TOG_PASSERT`)   |
 | `togbane/gruppe2/ferdig`      | ESP32 #2 signalerer til #3 (`TOG_PASSERT`)   |
 | `togbane/status`              | Global status (`RESET` / `GRUPPE1_FERDIG` / `GRUPPE2_FERDIG` / `TOG_PASSERT`) |
+| `togbane/gyro/x`              | Rotasjonshastighet X-akse i °/s (float)      |
+| `togbane/gyro/y`              | Rotasjonshastighet Y-akse i °/s (float)      |
+| `togbane/gyro/z`              | Rotasjonshastighet Z-akse i °/s (float)      |
 
 ## Deteksjonsparametere
 
@@ -56,9 +60,11 @@ src/
   main.cpp            — Hovedlogikk: sensorsekvens, MQTT-publisering, reset
   wificonnection.cpp  — WiFi-tilkobling, MQTT-klient, enkel webserver
   ultrasonic.cpp      — HC-SR04 driver (trigger/echo)
+  gyro.cpp            — ICM-20948 gyroskop-driver (I2C, bank-switching)
 include/
   wificonnection.h
   ultrasonic.h
+  gyro.h              — Klasse-definisjon for ICM20948Gyro
 MQTTPlot.py           — Python-skript for visualisering av MQTT-data
 platformio.ini        — PlatformIO build-konfig (esp32doit-devkit-v1, Arduino)
 ```
@@ -66,4 +72,12 @@ platformio.ini        — PlatformIO build-konfig (esp32doit-devkit-v1, Arduino)
 ## Nettverkskonfigurasjon
 
 - **WiFi:** NTNU-IOT
-- **MQTT-broker:** `10.22.128.83:1883`
+- **MQTT-broker:** `10.22.130.110:1883`
+
+## ICM-20948 gyro
+
+- Kommuniserer via I2C (SDA = GPIO 21, SCL = GPIO 22 på ESP32)
+- Standard I2C-adresse: `0x69` (ADR-pinne til GND → `0x68`)
+- Konfigurert med full-scale `±250 dps` og DLPF 120 Hz
+- Samplingsrate: ~100 Hz (divisor = 10)
+- Brukes til å detektere skjevheter/avvik i skinnene og fartsendringer langs banen

@@ -5,7 +5,7 @@
 #include "gyro.h"
 
 // ── Nettverksinnstillinger ────────────────────────────────────────────────
-const char* MQTT_SERVER = "10.22.129.65";
+const char* MQTT_SERVER = "10.22.128.115";
 
 // ── Deteksjonsparametere ──────────────────────────────────────────────────
 const float         TRIGGER_DISTANCE  = 10.0f;  // cm — regnes som deteksjon
@@ -20,285 +20,230 @@ const char* STATE_STR[] = { "WAITING", "ACTIVE", "DONE" };
 
 // ── Globale variabler (settes i setup basert på MAC) ─────────────────────
 WiFiConnection wifi("NTNU-IOT", "");
+Ultrasonic* sensors[2] = { nullptr, nullptr };
+ICM20948Gyro gyro;
+bool gyroAvailable = false;
 
-Ultrasonic* sensors[3] = {nullptr, nullptr, nullptr};
-int numSensors = 0;
-int sensorOffset = 0;
-int activeSensor = 0;
-bool isFirstGroup = true;
-bool isLastGroup = false;
-bool waitingForStart = false;
+int         sensorOffset = 0;
+const char* listenTopic  = nullptr;
+const char* doneTopic    = nullptr;
 
-unsigned long lastTriggerTime = 0;
-unsigned long groupStartTime = 0;
+SensorState  sensorState[2]      = { WAITING, WAITING };
+int          consecutiveCount[2] = { 0, 0 };
+int          activeSensor        = -1;
 
-// FIX 1: Høyere terskel for å hindre for rask aktivering
-const unsigned long RESET_TIMEOUT = 15000;   // 15 sekunder
-const unsigned long ACTIVATION_DELAY = 800;  // 800ms mellom sensorer
-const float MAX_DISTANCE = 20.0;
-const float TRIGGER_DISTANCE = 10.0;
-const int REQUIRED_READINGS = 5;             // 5 x 100ms = 500ms sammenhengende deteksjon
+bool          pendingActivation = false;
+int           pendingIdx        = -1;
+unsigned long pendingTime       = 0;
 
-int triggerCount = 0;
+unsigned long lastActivityTime = 0;
+unsigned long lastGyroPublish  = 0;
+const unsigned long GYRO_INTERVAL = 200;
 
-// FIX 2: groupActive hindrer reset-loop etter fullført runde
-bool groupActive = false;
+// ── Hjelpefunksjoner ──────────────────────────────────────────────────────
 
-void publishAllSensorStatuses(int forActiveSensor, const char* activeStatus) {
-  for (int i = 0; i < numSensors; i++) {
-    int sensorNum = i + 1 + sensorOffset;
-    String statusTopic = "togbane/sensor/" + String(sensorNum) + "/status";
-    if (i == forActiveSensor) {
-      wifi.publishMQTT(statusTopic.c_str(), activeStatus);
-    } else if (i < forActiveSensor) {
-      wifi.publishMQTT(statusTopic.c_str(), "DONE");
-    } else {
-      wifi.publishMQTT(statusTopic.c_str(), "WAITING");
+void publishSensor(int localIdx, float dist, SensorState state) {
+    int globalNum = sensorOffset + localIdx + 1;
+    String topicDist   = "togbane/sensor/" + String(globalNum) + "/distanse";
+    String topicStatus = "togbane/sensor/" + String(globalNum) + "/status";
+    wifi.publishMQTT(topicDist.c_str(),   String(dist, 1));
+    wifi.publishMQTT(topicStatus.c_str(), STATE_STR[state]);
+}
+
+void activateSensor(int localIdx) {
+    sensorState[localIdx]      = ACTIVE;
+    consecutiveCount[localIdx] = 0;
+    activeSensor               = localIdx;
+    lastActivityTime           = millis();
+    Serial.println("Sensor " + String(sensorOffset + localIdx + 1) + " aktivert");
+    publishSensor(localIdx, 0.0f, ACTIVE);
+}
+
+void resetAll() {
+    Serial.println("RESET — tilbakestiller alle sensorer");
+    activeSensor      = -1;
+    pendingActivation = false;
+    for (int i = 0; i < 2; i++) {
+        sensorState[i]      = WAITING;
+        consecutiveCount[i] = 0;
+        publishSensor(i, 0.0f, WAITING);
     }
-  }
-}
-
-void publishAllSleep() {
-  for (int i = 0; i < numSensors; i++) {
-    int sensorNum = i + 1 + sensorOffset;
-    String statusTopic = "togbane/sensor/" + String(sensorNum) + "/status";
-    wifi.publishMQTT(statusTopic.c_str(), "SLEEP");
-  }
-}
-
-// FIX 2: Én felles reset-funksjon — setter alltid timestamps og groupActive riktig
-void doReset(bool sendMqtt) {
-  activeSensor = 0;
-  triggerCount = 0;
-  groupActive = false;        // Stopper reset-loopen
-  groupStartTime = millis();  // Oppdater alltid
-  lastTriggerTime = millis(); // Oppdater alltid
-
-  if (!isFirstGroup) {
-    waitingForStart = true;
-    publishAllSleep();
-  }
-
-  if (sendMqtt) {
     wifi.publishMQTT("togbane/status", "RESET");
-    Serial.println("RESET sendt.");
-  }
+    lastActivityTime = millis();
+
+    // Board #1 starter alltid umiddelbart etter reset
+    if (listenTopic == nullptr) {
+        activateSensor(0);
+    }
 }
 
+// MQTT-callback — mottar TOG_PASSERT fra forrige board
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String msg = "";
-  for (unsigned int i = 0; i < length; i++) {
-    msg += (char)payload[i];
-  }
+    String msg;
+    for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+    msg.trim();
+    Serial.println("MQTT [" + String(topic) + "]: " + msg);
 
-  String topicStr = String(topic);
-  Serial.println("MQTT mottatt: " + topicStr + " = " + msg);
-
-  if (!isFirstGroup && waitingForStart) {
-    bool shouldStart =
-      (topicStr == "togbane/gruppe1/ferdig" && sensorOffset == 2 && msg == "TOG_PASSERT") ||
-      (topicStr == "togbane/gruppe2/ferdig" && sensorOffset == 4 && msg == "TOG_PASSERT");
-
-    if (shouldStart) {
-      Serial.println("Signal mottatt! Starter sensor " + String(1 + sensorOffset));
-      waitingForStart = false;
-      groupActive = true;
-      activeSensor = 0;
-      triggerCount = 0;
-      lastTriggerTime = millis();
-      groupStartTime = millis();
+    if (listenTopic != nullptr
+        && String(topic) == String(listenTopic)
+        && msg == "TOG_PASSERT")
+    {
+        Serial.println("Forrige gruppe ferdig — aktiverer sensor A om " +
+                       String(ACTIVATION_DELAY) + "ms");
+        pendingActivation = true;
+        pendingIdx        = 0;
+        pendingTime       = millis() + ACTIVATION_DELAY;
     }
-  }
 }
 
+// ── setup() ──────────────────────────────────────────────────────────────
 void setup() {
-  Serial.begin(9600);
-  delay(1000);
+    Serial.begin(115200);
+    delay(1000);
 
-  String mac = WiFi.macAddress();
-  Serial.println("============================");
-  Serial.println("MAC: " + mac);
-  Serial.println("============================");
+    String mac = WiFi.macAddress();
+    Serial.println("MAC: " + mac);
 
-  if (mac == "10:97:BD:D4:DE:B0") {
-    Serial.println("ESP32 #1 - Sensor 1-2");
-    sensorOffset = 0;
-    numSensors = 2;
-    isFirstGroup = true;
-    isLastGroup = false;
-    waitingForStart = false;
-    groupActive = true;   // ESP32 #1 starter alltid aktiv
-    sensors[0] = new Ultrasonic(26, 25);
-    sensors[1] = new Ultrasonic(32, 33);
-  }
-  else if (mac == "4C:C3:82:CC:E0:EC") {
-    Serial.println("ESP32 #2 - Sensor 3-4");
-    sensorOffset = 2;
-    numSensors = 2;
-    isFirstGroup = false;
-    isLastGroup = false;
-    waitingForStart = true;
-    groupActive = false;
-    sensors[0] = new Ultrasonic(14, 27);
-    sensors[1] = new Ultrasonic(26, 25);
-  }
-  else if (mac == "A4:F0:0F:67:19:EC") {
-    Serial.println("ESP32 #3 - Sensor 5-6");
-    sensorOffset = 4;
-    numSensors = 2;
-    isFirstGroup = false;
-    isLastGroup = true;
-    waitingForStart = true;
-    groupActive = false;
-    sensors[0] = new Ultrasonic(26, 25);
-    sensors[1] = new Ultrasonic(32, 33);
-  }
-  else {
-    Serial.println("UKJENT ESP32! MAC: " + mac);
-    while (true) { delay(1000); }
-  }
-
-  for (int i = 0; i < numSensors; i++) {
-    sensors[i]->init();
-  }
-
-  wifi.connect();
-  delay(1000);
-
-  wifi.setDestination(mqtt_server, 1883);
-  wifi.setCallback(mqttCallback);
-  wifi.startWebServer();
-
-  if (!isFirstGroup) {
-    if (sensorOffset == 2) {
-      wifi.subscribe("togbane/gruppe1/ferdig");
-      Serial.println("Venter på signal fra ESP32 #1...");
-    } else if (sensorOffset == 4) {
-      wifi.subscribe("togbane/gruppe2/ferdig");
-      Serial.println("Venter på signal fra ESP32 #2...");
+    // Boardidentifikasjon via MAC — setter sensorpinner, offset og topics
+    if (mac == "10:97:BD:D4:DE:B0" || mac == "84:1F:E8:39:7A:58") {
+        Serial.println("Board #1 — sensorer 1-2");
+        sensorOffset = 0;
+        listenTopic  = nullptr;
+        doneTopic    = "togbane/gruppe1/ferdig";
+        sensors[0]   = new Ultrasonic(26, 25);
+        sensors[1]   = new Ultrasonic(32, 33);
     }
-    publishAllSleep();
-  }
+    else if (mac == "4C:C3:82:CC:E0:EC") {
+        Serial.println("Board #2 — sensorer 3-4");
+        sensorOffset = 2;
+        listenTopic  = "togbane/gruppe1/ferdig";
+        doneTopic    = "togbane/gruppe2/ferdig";
+        sensors[0]   = new Ultrasonic(14, 27);
+        sensors[1]   = new Ultrasonic(26, 25);
+    }
+    else if (mac == "A4:F0:0F:67:19:EC") {
+        Serial.println("Board #3 — sensorer 5-6");
+        sensorOffset = 4;
+        listenTopic  = "togbane/gruppe2/ferdig";
+        doneTopic    = nullptr;
+        sensors[0]   = new Ultrasonic(26, 25);
+        sensors[1]   = new Ultrasonic(32, 33);
+    }
+    else {
+        Serial.println("UKJENT ESP32! MAC: " + mac);
+        while (true) { delay(1000); }
+    }
 
-  Serial.print("IP: http://");
-  Serial.println(WiFi.localIP());
+    for (int i = 0; i < 2; i++) {
+        sensors[i]->init();
+    }
 
-  Serial.println("--- KALIBRERING ---");
-  for (int i = 0; i < numSensors; i++) {
-    float d = sensors[i]->measureDistance();
-    Serial.println("Sensor " + String(i + 1 + sensorOffset) + " baseline: " + String(d) + " cm");
-  }
-  Serial.println("--- KLAR ---");
+    // Koble til WiFi og MQTT
+    wifi.connect();
+    delay(500);
+    wifi.setCallback(mqttCallback);
+    wifi.setDestination(MQTT_SERVER, 1883);
 
-  groupStartTime = millis();
-  lastTriggerTime = millis();  // FIX 2: Sett ved oppstart så timeout ikke trigger umiddelbart
+    if (listenTopic != nullptr) {
+        wifi.subscribe(listenTopic);
+    }
+
+    wifi.startWebServer();
+    Serial.print("IP: http://");
+    Serial.println(WiFi.localIP());
+
+    // Init gyro — kun board #1 har ICM-20948 koblet til I2C
+    if (sensorOffset == 0) {
+        gyroAvailable = gyro.init(GYRO_FS_250DPS);
+        if (!gyroAvailable) Serial.println("Gyro ikke funnet — sjekk kabling");
+    }
+
+    lastActivityTime = millis();
+
+    // Board #1 starter med sensor 1 aktiv med en gang
+    if (listenTopic == nullptr) {
+        activateSensor(0);
+    }
+
+    Serial.println("--- KLAR ---");
 }
 
+// ── loop() ───────────────────────────────────────────────────────────────
 void loop() {
-  wifi.handleClient();
+    wifi.handleClient();
 
-  // --- Venter på MQTT-signal ---
-  if (waitingForStart) {
-    static unsigned long lastSleepPublish = 0;
-    if (millis() - lastSleepPublish > 5000) {
-      lastSleepPublish = millis();
-      publishAllSleep();
+    unsigned long now = millis();
+
+    // ── Gyrodata (kun board #1) ───────────────────────────────────────────
+    if (gyroAvailable && (now - lastGyroPublish >= GYRO_INTERVAL)) {
+        lastGyroPublish = now;
+        float gx, gy, gz;
+        gyro.readGyro(gx, gy, gz);
+        wifi.publishMQTT("togbane/gyro/x", String(gx, 2));
+        wifi.publishMQTT("togbane/gyro/y", String(gy, 2));
+        wifi.publishMQTT("togbane/gyro/z", String(gz, 2));
     }
-    delay(100);
-    return;
-  }
 
-  // FIX 2: Ikke gjør noe hvis gruppen ikke er aktiv (hindrer reset-loop)
-  if (!groupActive) {
-    delay(100);
-    return;
-  }
-
-  // --- Timeout-sjekk (kun basert på lastTriggerTime) ---
-  if (millis() - lastTriggerTime > RESET_TIMEOUT) {
-    Serial.println("Timeout! Ingen aktivitet. Resetter.");
-    doReset(true);
-
-    // FIX 2: ESP32 #1 starter alltid neste runde selv
-    if (isFirstGroup) {
-      groupActive = true;
+    // ── Utsatt sensoraktivering (etter ACTIVATION_DELAY) ─────────────────
+    if (pendingActivation && now >= pendingTime) {
+        pendingActivation = false;
+        activateSensor(pendingIdx);
     }
-    return;
-  }
 
-  if (activeSensor >= numSensors) {
-    delay(100);
-    return;
-  }
+    // ── Reset-timeout ─────────────────────────────────────────────────────
+    if (activeSensor != -1 && (now - lastActivityTime >= RESET_TIMEOUT)) {
+        resetAll();
+        return;
+    }
 
-  // --- Les aktiv sensor ---
-  float distance = sensors[activeSensor]->measureDistance();
-  int sensorNum = activeSensor + 1 + sensorOffset;
+    // ── Ingen aktiv sensor ────────────────────────────────────────────────
+    if (activeSensor == -1) return;
 
-  if (distance > MAX_DISTANCE || distance <= 0) {
-    distance = MAX_DISTANCE;
-    triggerCount = 0;
-  }
+    // ── Mål avstand fra aktiv sensor ─────────────────────────────────────
+    float dist = sensors[activeSensor]->measureDistance();
+    if (dist > MAX_DISTANCE) dist = MAX_DISTANCE;
 
-  String distTopic = "togbane/sensor/" + String(sensorNum) + "/distanse";
-  wifi.publishMQTT(distTopic.c_str(), String(distance, 1));
-  publishAllSensorStatuses(activeSensor, "WAITING");
+    publishSensor(activeSensor, dist, ACTIVE);
 
-  Serial.println("Sensor " + String(sensorNum) + ": " + String(distance) +
-                 " cm (treff: " + String(triggerCount) + "/" + String(REQUIRED_READINGS) + ")");
+    // ── Tell påfølgende treff under terskel ───────────────────────────────
+    if (dist <= TRIGGER_DISTANCE) {
+        consecutiveCount[activeSensor]++;
+        lastActivityTime = now;
+    } else {
+        consecutiveCount[activeSensor] = 0;
+    }
 
-  bool delayPassed = (millis() - lastTriggerTime > ACTIVATION_DELAY);
+    // ── Sensor bekreftet — toget detektert ───────────────────────────────
+    if (consecutiveCount[activeSensor] >= REQUIRED_READINGS) {
+        int localIdx = activeSensor;
+        activeSensor = -1;
 
-  if (distance < TRIGGER_DISTANCE && distance > 0.5 && delayPassed) {
-    triggerCount++;
+        sensorState[localIdx] = DONE;
+        publishSensor(localIdx, dist, DONE);
+        Serial.println("Sensor " + String(sensorOffset + localIdx + 1) + ": DONE");
 
-    if (triggerCount >= REQUIRED_READINGS) {
-      String statusTopic = "togbane/sensor/" + String(sensorNum) + "/status";
-      wifi.publishMQTT(statusTopic.c_str(), "ACTIVE");
-      Serial.println(">>> Sensor " + String(sensorNum) + " AKTIVERT! <<<");
+        int nextIdx = localIdx + 1;
 
-      lastTriggerTime = millis();
-      activeSensor++;
-      triggerCount = 0;
-
-      if (activeSensor >= numSensors) {
-        Serial.println("Alle sensorer på denne ESP32 aktivert!");
-
-        for (int i = 0; i < numSensors; i++) {
-          int sNum = i + 1 + sensorOffset;
-          String sTopic = "togbane/sensor/" + String(sNum) + "/status";
-          wifi.publishMQTT(sTopic.c_str(), "DONE");
-        }
-
-        if (isFirstGroup) {
-          wifi.publishMQTT("togbane/gruppe1/ferdig", "TOG_PASSERT");
-          wifi.publishMQTT("togbane/status", "GRUPPE1_FERDIG");
-        } else if (!isLastGroup) {
-          wifi.publishMQTT("togbane/gruppe2/ferdig", "TOG_PASSERT");
-          wifi.publishMQTT("togbane/status", "GRUPPE2_FERDIG");
+        if (nextIdx < 2 && sensorState[nextIdx] == WAITING) {
+            // Aktiver neste sensor på dette boardet etter forsinkelse
+            pendingActivation = true;
+            pendingIdx        = nextIdx;
+            pendingTime       = now + ACTIVATION_DELAY;
         } else {
-          wifi.publishMQTT("togbane/status", "TOG_PASSERT");
+            // Begge sensorer på dette boardet er ferdige
+            if (doneTopic != nullptr) {
+                wifi.publishMQTT(doneTopic, "TOG_PASSERT");
+                Serial.println("Publiserer TOG_PASSERT -> " + String(doneTopic));
+
+                if (sensorOffset == 0)
+                    wifi.publishMQTT("togbane/status", "GRUPPE1_FERDIG");
+                else if (sensorOffset == 2)
+                    wifi.publishMQTT("togbane/status", "GRUPPE2_FERDIG");
+            } else {
+                // Board #3 — toget har fullfort hele banen
+                wifi.publishMQTT("togbane/status", "TOG_PASSERT");
+                Serial.println("Toget har fullfort hele banen!");
+            }
         }
-
-        delay(2000);
-
-        // FIX 2: doReset() setter groupActive=false og timestamps riktig
-        doReset(false);
-
-        // FIX 2: ESP32 #1 reaktiverer seg selv for neste runde
-        if (isFirstGroup) {
-          groupActive = true;
-          Serial.println("ESP32 #1: Klar for neste runde!");
-        }
-
-        Serial.println("Resetter til sensor " + String(1 + sensorOffset));
-      } else {
-        Serial.println("Venter på sensor " + String(activeSensor + 1 + sensorOffset) + "...");
-      }
     }
-  } else if (distance >= TRIGGER_DISTANCE || distance <= 0.5) {
-    triggerCount = 0;
-  }
-
-  delay(100);
 }
