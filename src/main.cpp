@@ -5,7 +5,7 @@
 #include "gyro.h"
 
 // ── Nettverksinnstillinger ────────────────────────────────────────────────
-const char* MQTT_SERVER = "10.22.128.115";
+const char* MQTT_SERVER = "10.22.129.37";
 
 // ── Deteksjonsparametere ──────────────────────────────────────────────────
 const float         TRIGGER_DISTANCE  = 10.0f;  // cm — regnes som deteksjon
